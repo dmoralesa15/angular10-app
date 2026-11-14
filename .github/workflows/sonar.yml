@@ -1,0 +1,63 @@
+name: Build, tests and SonarQube Cloud
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    name: Build, test and analyze
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      NG_CLI_ANALYTICS: 'false'
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node for Angular 10
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '12.22.12'
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build Angular application
+        working-directory: frontend
+        run: npm run build
+
+      - name: Run headless tests with coverage
+        working-directory: frontend
+        run: npm run test -- --watch=false --browsers=ChromeHeadless --code-coverage
+
+      - name: Verify LCOV report
+        run: |
+          test -s frontend/coverage/angular-starter/lcov.info
+          grep -q '^SF:' frontend/coverage/angular-starter/lcov.info
+          grep -q '^DA:' frontend/coverage/angular-starter/lcov.info
+
+      - name: Verify SonarQube configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          test -f sonar-project.properties || { echo 'Missing sonar-project.properties with real project identifiers'; exit 1; }
+          test -n "$SONAR_TOKEN" || { echo 'Missing repository secret SONAR_TOKEN'; exit 1; }
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v8.5.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.qualitygate.wait=true
